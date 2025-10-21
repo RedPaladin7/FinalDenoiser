@@ -1,223 +1,317 @@
-// src/components/AudioRecorder.tsx
-'use client';
+'use client'
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
+import { Mic, Upload, Zap, Download, Activity, Radio } from 'lucide-react';
+
+interface AudioMetadata {
+  dominantFrequency: number;
+  centroidFrequency: number;
+  rms: number;
+  duration: number;
+}
 
 const AudioRecorder: React.FC = () => {
-  const [recording, setRecording] = useState(false);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [sourceAudioUrl, setSourceAudioUrl] = useState<string | null>(null);
   const [denoisedAudioUrl, setDenoisedAudioUrl] = useState<string | null>(null);
-  const [audioMetadata, setAudioMetadata] = useState<{
-    dominant_frequency_hz?: number;
-    centroid_frequency_hz?: number;
-    rms?: number;
-    duration_seconds?: number;
-  } | null>(null);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [message, setMessage] = useState<string>('SYSTEM READY. AWAITING INPUT.');
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState('');
+  const [metadata, setMetadata] = useState<AudioMetadata | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  // 1. Start Recording
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        audioChunksRef.current.push(event.data);
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
       };
 
-      mediaRecorderRef.current.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        setAudioBlob(audioBlob);
-        stream.getTracks().forEach((track) => track.stop()); // Stop the stream
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+        setAudioBlob(blob);
+        const url = URL.createObjectURL(blob);
+        setSourceAudioUrl(url);
+        setMessage('RECORDING CAPTURED. READY FOR NEURAL PROCESSING.');
+        stream.getTracks().forEach(track => track.stop());
       };
 
-      mediaRecorderRef.current.start();
-      setRecording(true);
+      mediaRecorder.start();
+      setIsRecording(true);
+      setMessage('RECORDING IN PROGRESS...');
       setDenoisedAudioUrl(null);
-      setAudioMetadata(null);
-      setMessage('Recording...');
-    } catch (err) {
-      console.error('Error starting recording:', err);
-      setMessage('Error: Could not access microphone.');
+      setMetadata(null);
+    } catch (error) {
+      setMessage('ERROR: MICROPHONE ACCESS DENIED.');
+      console.error('Recording error:', error);
     }
   };
 
-  // 2. Stop Recording
   const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+    if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
-      setRecording(false);
-      setMessage('Recording stopped. Ready to denoise.');
+      setIsRecording(false);
     }
   };
 
-  // 3. Handle File Upload
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      if (!file.type.startsWith('audio/')) {
-        setMessage('Please upload a valid audio file.');
-        return;
-      }
+    if (file && file.type.includes('audio')) {
       setAudioBlob(file);
+      const url = URL.createObjectURL(file);
+      setSourceAudioUrl(url);
+      setMessage('AUDIO FILE LOADED. READY FOR NEURAL PROCESSING.');
       setDenoisedAudioUrl(null);
-      setAudioMetadata(null);
-      setMessage(`File loaded: ${file.name}. Ready to denoise.`);
+      setMetadata(null);
+    } else {
+      setMessage('ERROR: INVALID FILE FORMAT. AUDIO FILES ONLY.');
     }
   };
 
-  // 4. Denoise Audio
-  const denoiseAudio = useCallback(async () => {
+  const denoiseAudio = async () => {
     if (!audioBlob) {
-      setMessage('Please record or upload an audio file first.');
+      setMessage('ERROR: NO AUDIO DATA AVAILABLE.');
       return;
     }
 
     setLoading(true);
-    setMessage('Denoising in progress...');
+    setMessage('INITIATING NEURAL ANALYSIS...');
+
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'audio.wav');
 
     try {
-      // Create FormData to send the file
-      const formData = new FormData();
-      formData.append('file', audioBlob, 'input.wav');
-
-      // Call the Next.js API route
       const response = await fetch('/api/denoise', {
         method: 'POST',
         body: formData,
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Unknown error occurred.');
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      // Extract metadata from custom header "X-Audio-Metadata"
       const metadataHeader = response.headers.get('X-Audio-Metadata');
-      let metadata = null;
       if (metadataHeader) {
-        try {
-          metadata = JSON.parse(metadataHeader);
-          setAudioMetadata(metadata);
-          setMessage(
-            `Denoising complete! Dominant freq: ${metadata.dominant_frequency_hz} Hz | Duration: ${metadata.duration_seconds}s`
-          );
-        } catch {
-          setMessage('Denoising complete! (Failed to parse audio metadata)');
-        }
-      } else {
-        setMessage('Denoising complete! Play or download the enhanced audio.');
+        const jsonString = metadataHeader.replace(/'/g, '"');
+        const parsedMetadata = JSON.parse(jsonString);
+        setMetadata({
+          dominantFrequency: parsedMetadata.dominant_frequency || 0,
+          centroidFrequency: parsedMetadata.centroid_frequency || 0,
+          rms: parsedMetadata.rms || 0,
+          duration: parsedMetadata.duration || 0,
+        });
       }
 
-      // Get the denoised audio blob
-      const denoisedBlob = await response.blob();
-
-      // Create a URL for the <audio> tag
-      const url = URL.createObjectURL(denoisedBlob);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
       setDenoisedAudioUrl(url);
+      setMessage('NEURAL PROCESSING COMPLETE. AUDIO ENHANCED.');
     } catch (error) {
-      console.error('Denoising Error:', error);
-      setMessage(`Denoising failed: ${error instanceof Error ? error.message : String(error)}`);
-      setDenoisedAudioUrl(null);
-      setAudioMetadata(null);
+      setMessage(`ERROR: PROCESSING FAILED - ${error instanceof Error ? error.message : 'UNKNOWN'}`);
+      console.error('Denoise error:', error);
     } finally {
       setLoading(false);
     }
-  }, [audioBlob]);
-
-  const sourceAudioUrl = audioBlob ? URL.createObjectURL(audioBlob) : null;
+  };
 
   return (
-    <div className="max-w-xl mx-auto p-6 bg-gray-50 rounded-lg shadow-lg">
-      <h1 className="text-3xl font-bold mb-6 text-center text-indigo-700">Audio Denoiser 🎧</h1>
-
-      {/* 1. Recorder Controls */}
-      <div className="flex justify-center space-x-4 mb-6">
-        <button
-          onClick={recording ? stopRecording : startRecording}
-          disabled={loading}
-          className={`px-6 py-3 rounded-lg font-semibold transition duration-200 ${
-            recording ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-green-500 hover:bg-green-600 text-white'
-          } disabled:opacity-50`}
-        >
-          {recording ? '🔴 Stop Recording' : '🎤 Start Recording'}
-        </button>
-
-        <label
-          htmlFor="file-upload"
-          className="cursor-pointer px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-semibold transition duration-200 disabled:opacity-50 flex items-center"
-        >
-          📤 Upload .wav File
-        </label>
-        <input
-          id="file-upload"
-          type="file"
-          accept="audio/wav"
-          onChange={handleFileUpload}
-          disabled={loading || recording}
-          className="hidden"
-        />
-      </div>
-
-      {/* 2. Status Message */}
-      <p className={`text-center mb-6 font-medium ${loading ? 'text-yellow-600' : 'text-gray-700'}`}>{message}</p>
-
-      {/* 3. Original Audio Player */}
-      {sourceAudioUrl && (
-        <div className="mb-6 border p-4 rounded-md bg-white shadow-sm">
-          <h2 className="text-xl font-semibold mb-2 text-gray-800">Original (Noisy) Audio</h2>
-          <audio src={sourceAudioUrl} controls className="w-full" />
+    <div className="min-h-screen bg-black flex items-center justify-center p-4 sm:p-8">
+      <div className="max-w-5xl w-full">
+        {/* Header */}
+        <div className="text-center mb-10 border-b-2 border-blue-500 pb-6 rounded-xl bg-gradient-to-b from-purple-950/20 to-transparent">
+          <div className="flex items-center justify-center gap-3 mb-3">
+            <Radio className="w-10 h-10 text-blue-400 drop-shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
+            <h1 className="text-4xl font-bold tracking-wider text-blue-400 drop-shadow-[0_0_20px_rgba(59,130,246,1)]">
+              NEURAL AUDIO MATRIX
+            </h1>
+            <Radio className="w-10 h-10 text-blue-400 drop-shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
+          </div>
+          <h2 className="text-xl tracking-widest text-purple-400">[ DENOISER v2.0 ]</h2>
         </div>
-      )}
 
-      {/* 4. Denoise Button */}
-      <div className="text-center mb-6">
-        <button
-          onClick={denoiseAudio}
-          disabled={!audioBlob || loading || recording}
-          className="w-full px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-lg transition duration-200 disabled:opacity-30"
-        >
-          {loading ? 'Processing... (up to 30s)' : '✨ Denoise Audio'}
-        </button>
-      </div>
-
-      {/* 5. Denoised Audio Player and Download */}
-      {denoisedAudioUrl && (
-        <div className="border border-green-400 p-4 rounded-md bg-green-50 shadow-md">
-          <h2 className="text-xl font-semibold mb-2 text-green-700">Enhanced (Clean) Audio</h2>
-          <audio src={denoisedAudioUrl} controls className="w-full mb-3" />
-          {audioMetadata && (
-            <div className="mb-3 p-3 bg-white rounded shadow-inner text-gray-800 font-mono text-sm">
-              <p>
-                <strong>Dominant Frequency:</strong> {audioMetadata.dominant_frequency_hz} Hz
-              </p>
-              <p>
-                <strong>Centroid Frequency:</strong> {audioMetadata.centroid_frequency_hz} Hz
-              </p>
-              <p>
-                <strong>RMS (Loudness):</strong> {audioMetadata.rms}
-              </p>
-              <p>
-                <strong>Duration:</strong> {audioMetadata.duration_seconds} s
-              </p>
-            </div>
-          )}
-          <div className="text-center">
-            <a
-              href={denoisedAudioUrl}
-              download="denoised_audio.wav"
-              className="inline-block px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-medium"
-            >
-              ⬇️ Download Enhanced Audio
-            </a>
+        {/* Status Message */}
+        <div className="mb-8 p-4 bg-purple-950/40 border-2 border-blue-500 rounded-2xl shadow-[0_0_25px_rgba(59,130,246,0.4)] backdrop-blur-sm">
+          <div className="flex items-center gap-3">
+            <Activity className={`w-5 h-5 ${loading ? 'animate-pulse text-blue-300' : 'text-blue-400'}`} />
+            <p className={`text-sm ${loading ? 'text-blue-300 animate-pulse' : 'text-blue-200'}`}>
+              {message}
+            </p>
           </div>
         </div>
-      )}
+
+        {/* Control Panel */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          {/* Recording Control */}
+          <div className="bg-purple-950/40 p-6 border-2 border-purple-600 rounded-2xl shadow-[0_0_20px_rgba(147,51,234,0.4)] backdrop-blur-sm">
+            <div className="flex items-center gap-2 mb-4 text-purple-300">
+              <Mic className="w-5 h-5" />
+              <h3 className="text-lg tracking-wide font-bold">RECORD</h3>
+            </div>
+            {!isRecording ? (
+              <button
+                onClick={startRecording}
+                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold tracking-wider transition-all shadow-[0_0_15px_rgba(59,130,246,0.6)] hover:shadow-[0_0_25px_rgba(59,130,246,1)]"
+              >
+                START CAPTURE
+              </button>
+            ) : (
+              <button
+                onClick={stopRecording}
+                className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold tracking-wider animate-pulse transition-all shadow-[0_0_15px_rgba(220,38,38,0.6)]"
+              >
+                STOP RECORDING
+              </button>
+            )}
+          </div>
+
+          {/* Upload Control */}
+          <div className="bg-purple-950/40 p-6 border-2 border-purple-600 rounded-2xl shadow-[0_0_20px_rgba(147,51,234,0.4)] backdrop-blur-sm">
+            <div className="flex items-center gap-2 mb-4 text-purple-300">
+              <Upload className="w-5 h-5" />
+              <h3 className="text-lg tracking-wide font-bold">UPLOAD</h3>
+            </div>
+            <label className="block">
+              <input
+                type="file"
+                accept="audio/*"
+                onChange={handleFileUpload}
+                className="hidden"
+                id="file-upload"
+              />
+              <label
+                htmlFor="file-upload"
+                className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold tracking-wider transition-all cursor-pointer block text-center shadow-[0_0_15px_rgba(59,130,246,0.6)] hover:shadow-[0_0_25px_rgba(59,130,246,1)]"
+              >
+                SELECT FILE
+              </label>
+            </label>
+          </div>
+
+          {/* Process Control */}
+          <div className="bg-purple-950/40 p-6 border-2 border-purple-600 rounded-2xl shadow-[0_0_20px_rgba(147,51,234,0.4)] backdrop-blur-sm">
+            <div className="flex items-center gap-2 mb-4 text-purple-300">
+              <Zap className="w-5 h-5" />
+              <h3 className="text-lg tracking-wide font-bold">PROCESS</h3>
+            </div>
+            <button
+              onClick={denoiseAudio}
+              disabled={!audioBlob || loading}
+              className={`w-full py-3 rounded-xl font-bold tracking-wider transition-all ${
+                !audioBlob || loading
+                  ? 'bg-gray-800 text-gray-600 cursor-not-allowed border-2 border-gray-700'
+                  : 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.6)] hover:shadow-[0_0_25px_rgba(59,130,246,1)]'
+              }`}
+            >
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Activity className="w-5 h-5 animate-spin" />
+                  PROCESSING...
+                </span>
+              ) : (
+                'DENOISE'
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Audio Playback Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          {/* Original Audio */}
+          <div className="bg-purple-950/40 p-6 border-2 border-blue-500 rounded-2xl shadow-[0_0_20px_rgba(59,130,246,0.3)] backdrop-blur-sm">
+            <h3 className="text-lg mb-4 text-blue-300 tracking-wide font-bold">[ NOISY INPUT ]</h3>
+            {sourceAudioUrl ? (
+              <audio
+                controls
+                src={sourceAudioUrl}
+                className="w-full rounded-xl"
+                style={{
+                  filter: 'hue-rotate(240deg) saturate(1.5) brightness(1.2) contrast(1.3)',
+                }}
+              />
+            ) : (
+              <div className="h-12 flex items-center justify-center text-gray-600 border-2 border-gray-800 rounded-xl bg-black/50">
+                NO DATA
+              </div>
+            )}
+          </div>
+
+          {/* Denoised Audio */}
+          <div className="bg-purple-950/40 p-6 border-2 border-blue-400 rounded-2xl shadow-[0_0_25px_rgba(59,130,246,0.5)] backdrop-blur-sm">
+            <h3 className="text-lg mb-4 text-blue-300 tracking-wide font-bold">[ ENHANCED OUTPUT ]</h3>
+            {denoisedAudioUrl ? (
+              <div className="space-y-4">
+                <audio
+                  controls
+                  src={denoisedAudioUrl}
+                  className="w-full rounded-xl"
+                  style={{
+                    filter: 'hue-rotate(240deg) saturate(1.5) brightness(1.2) contrast(1.3)',
+                  }}
+                />
+                <a
+                  href={denoisedAudioUrl}
+                  download="denoised_audio.wav"
+                  className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold tracking-wider transition-all shadow-[0_0_15px_rgba(59,130,246,0.6)] hover:shadow-[0_0_25px_rgba(59,130,246,1)]"
+                >
+                  <Download className="w-5 h-5" />
+                  DOWNLOAD
+                </a>
+              </div>
+            ) : (
+              <div className="h-12 flex items-center justify-center text-gray-600 border-2 border-gray-800 rounded-xl bg-black/50">
+                AWAITING PROCESSING
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Metadata Panel */}
+        {metadata && (
+          <div className="bg-purple-950/40 p-6 border-2 border-blue-500 rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.5)] backdrop-blur-sm">
+            <h3 className="text-xl mb-6 text-blue-300 tracking-widest text-center border-b-2 border-blue-600 pb-3 font-bold">
+              [ SPECTRAL ANALYSIS ]
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              <div className="text-center p-4 bg-black/30 rounded-xl border border-purple-700">
+                <p className="text-purple-400 text-xs mb-2 tracking-wider font-bold">DOMINANT FREQ</p>
+                <p className="text-3xl text-blue-400 font-bold drop-shadow-[0_0_12px_rgba(59,130,246,1)]">
+                  {metadata.dominantFrequency.toFixed(2)}
+                </p>
+                <p className="text-gray-500 text-xs mt-1">Hz</p>
+              </div>
+              <div className="text-center p-4 bg-black/30 rounded-xl border border-purple-700">
+                <p className="text-purple-400 text-xs mb-2 tracking-wider font-bold">CENTROID FREQ</p>
+                <p className="text-3xl text-blue-400 font-bold drop-shadow-[0_0_12px_rgba(59,130,246,1)]">
+                  {metadata.centroidFrequency.toFixed(2)}
+                </p>
+                <p className="text-gray-500 text-xs mt-1">Hz</p>
+              </div>
+              <div className="text-center p-4 bg-black/30 rounded-xl border border-purple-700">
+                <p className="text-purple-400 text-xs mb-2 tracking-wider font-bold">RMS LOUDNESS</p>
+                <p className="text-3xl text-blue-400 font-bold drop-shadow-[0_0_12px_rgba(59,130,246,1)]">
+                  {metadata.rms.toFixed(4)}
+                </p>
+                <p className="text-gray-500 text-xs mt-1">AMPLITUDE</p>
+              </div>
+              <div className="text-center p-4 bg-black/30 rounded-xl border border-purple-700">
+                <p className="text-purple-400 text-xs mb-2 tracking-wider font-bold">DURATION</p>
+                <p className="text-3xl text-blue-400 font-bold drop-shadow-[0_0_12px_rgba(59,130,246,1)]">
+                  {metadata.duration.toFixed(2)}
+                </p>
+                <p className="text-gray-500 text-xs mt-1">SECONDS</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
