@@ -17,10 +17,15 @@ SR = 16000
 SEGMENT = 32000
 EXPORT_DIR = "./denoiser_export"
 model_wrapper = None
+allowed_origins = [
+    "http:/localhost:3000",
+    "https://final-denoiser.vercel.app"
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
