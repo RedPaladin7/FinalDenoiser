@@ -1,5 +1,5 @@
 {
   "/page": "app/page.js",
-  "/api/denoise/route": "app/api/denoise/route.js",
-  "/favicon.ico/route": "app/favicon.ico/route.js"
+  "/favicon.ico/route": "app/favicon.ico/route.js",
+  "/api/denoise/route": "app/api/denoise/route.js"
 }
