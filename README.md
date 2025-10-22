@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🎧 Neural Audio Denoiser: UNet/ResNet Web Application
 
-## Getting Started
+This project is a full-stack, deep learning solution for real-time audio noise reduction. It uses a decoupled architecture where a **Next.js frontend** captures and displays audio, and a **FastAPI server** handles the heavy-duty TensorFlow inference.
 
-First, run the development server:
+## ✨ Features
+
+* **🎙️ Audio Input:** Record audio directly via the microphone or upload an existing WAV file.
+* **💻 Dark, Tech-Themed UI:** A modern, visually engaging "Neural Matrix" interface using **Tailwind CSS** and custom fonts.
+* **🧠 Deep Learning Inference:** Leverages a trained TensorFlow model (**UNet** or **ResNet**) for spectral masking and noise reduction.
+* **📈 Quantitative Analysis:** Displays key post-denoising metrics: **Dominant Frequency**, **Centroid Frequency**, **RMS Loudness**, and **Duration**.
+* **🌐 Scalable Architecture:** Decoupled ML backend for easier scaling and deployment.
+
+***
+
+## 🏛️ Project Architecture
+
+The application is composed of three primary services that communicate via HTTP:
+
+| File | Technology | Role |
+| :--- | :--- | :--- |
+| **ML Logic** (`base_model.py`) | Python / TensorFlow | Defines the **UNet/ResNet** model architecture, training configuration, and loss functions. |
+| **ML Server** (`/python-server/app.py`) | FastAPI / TensorFlow | **Inference Engine.** Loads the model, handles audio segmenting/padding, runs the denoiser, calculates metrics, and streams the enhanced WAV file. |
+| **API Proxy** (`src/app/api/denoise/route.ts`) | Next.js API Routes | **Proxy Layer.** Forwards the incoming audio `FormData` to the external FastAPI URL and relays the response headers (`X-Audio-Metadata`) and audio file back to the client. |
+| **Frontend** (`src/components/AudioRecorder.tsx`) | Next.js (React/TS) | **User Interface.** Manages recording, file upload, status display, and parses the metadata header for display. |
+
+***
+
+## 🚀 Setup and Installation
+
+### Prerequisites
+
+You need two environments running simultaneously:
+
+1.  **Python 3.10+** (with a trained TensorFlow model).
+2.  **Node.js 18+** (for the Next.js frontend).
+
+### 1. Python Backend Setup
+
+Navigate to the `python-server` directory (or where `app.py` is located).
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+# 1. Setup Environment
+python3 -m venv venv
+source venv/bin/activate
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+# 2. Install Dependencies
+# Ensure you include: tensorflow, fastapi, uvicorn, numpy, scipy
+pip install -r requirements.txt 
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+# 3. Ensure Model Export
+# A trained model (from base_model.py) must be saved as a TensorFlow SavedModel 
+# within the directory: ./denoiser_export/
